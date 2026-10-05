@@ -4,8 +4,9 @@ import { mount, unmount } from "svelte";
 import Counter from "./Counter.svelte";
 import Clock from "./Clock.svelte";
 
-(window.autumnSvelte = window.autumnSvelte || []).push({
-  mount,
-  unmount,
-  components: { Counter, Clock },
-});
+// An element with id="autumnSvelte" can replace the global, so check it.
+let queue = window.autumnSvelte;
+if (!Array.isArray(queue) && queue?.loader !== true) {
+  queue = window.autumnSvelte = [];
+}
+queue.push({ mount, unmount, components: { Counter, Clock } });

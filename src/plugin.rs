@@ -12,8 +12,9 @@ use autumn_web::plugin_contract::PluginContract;
 
 use crate::assets::SVELTE_ASSETS;
 
-/// The plugin name in Autumn diagnostics.
-pub const PLUGIN_NAME: &str = "autumn-plugin-svelte";
+/// The crate name. [`SveltePlugin`] with no bundles uses it as its plugin
+/// name, and every [`SveltePlugin`] declares it in its contract.
+pub const PLUGIN_NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Installs Svelte islands in an Autumn app.
 ///
@@ -26,14 +27,16 @@ pub const PLUGIN_NAME: &str = "autumn-plugin-svelte";
 ///
 /// # async fn run() {
 /// autumn_web::app()
-///     .plugin(SveltePlugin::new().components(&ISLANDS))
+///     .plugin(SveltePlugin::new().bundle(&ISLANDS))
 ///     .run()
 ///     .await;
 /// # }
 /// ```
 ///
-/// A second `SveltePlugin` on the same app is a no-op (Autumn skips a
-/// duplicate plugin name). Give all bundles to one plugin.
+/// The plugin name includes the bundle namespaces, for example
+/// `autumn-plugin-svelte[app-islands]`. Thus a library crate and the app can
+/// each install a `SveltePlugin` with their own bundles. Two plugins with the
+/// same bundles are one plugin: Autumn skips the second.
 #[derive(Debug, Default)]
 #[must_use]
 pub struct SveltePlugin {
@@ -50,18 +53,34 @@ impl SveltePlugin {
 
     /// Adds an app bundle of compiled Svelte components.
     ///
-    /// The bundle namespace must not be `svelte` (the loader uses it).
-    /// Autumn stops at start-up when two different bundles use one
-    /// namespace. The same bundle two times is harmless.
-    pub fn components(mut self, bundle: &'static PluginAssets) -> Self {
-        self.bundles.push(bundle);
+    /// The same bundle two times is harmless.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the bundle namespace is `svelte`: the loader bundle uses
+    /// it. Autumn also stops at start-up when two different bundles use one
+    /// namespace.
+    pub fn bundle(mut self, bundle: &'static PluginAssets) -> Self {
+        assert!(
+            bundle.namespace() != SVELTE_ASSETS.namespace(),
+            "the namespace `svelte` belongs to {PLUGIN_NAME}; give the app bundle another namespace"
+        );
+        if !self.bundles.iter().any(|b| std::ptr::eq(*b, bundle)) {
+            self.bundles.push(bundle);
+        }
         self
     }
 }
 
 impl Plugin for SveltePlugin {
     fn name(&self) -> Cow<'static, str> {
-        Cow::Borrowed(PLUGIN_NAME)
+        if self.bundles.is_empty() {
+            return Cow::Borrowed(PLUGIN_NAME);
+        }
+        let mut namespaces: Vec<&str> = self.bundles.iter().map(|b| b.namespace()).collect();
+        namespaces.sort_unstable();
+        namespaces.dedup();
+        Cow::Owned(format!("{PLUGIN_NAME}[{}]", namespaces.join(",")))
     }
 
     fn contract(&self) -> Option<PluginContract> {
@@ -99,7 +118,7 @@ mod tests {
 
     fn client() -> TestClient {
         TestApp::new()
-            .plugin(SveltePlugin::new().components(&APP))
+            .plugin(SveltePlugin::new().bundle(&APP))
             .build()
     }
 
@@ -170,7 +189,9 @@ mod tests {
 
     #[test]
     fn routes_are_public_plugin_routes() {
-        let app = autumn_web::app().plugin(SveltePlugin::new().components(&APP));
+        let plugin = SveltePlugin::new().bundle(&APP);
+        let name = plugin.name().into_owned();
+        let app = autumn_web::app().plugin(plugin);
         let infos = app.plugin_route_infos().expect("route infos");
         let asset_routes: Vec<_> = infos
             .iter()
@@ -182,13 +203,13 @@ mod tests {
             assert_eq!(info.method, "GET");
             assert_eq!(info.classification, RouteClassification::Public);
             assert_eq!(info.middleware, [PLUGIN_ASSETS_ROUTE_MARKER]);
-            assert_eq!(info.source, RouteSource::Plugin(PLUGIN_NAME.to_owned()));
+            assert_eq!(info.source, RouteSource::Plugin(name.clone()));
         }
     }
 
     #[test]
     fn plugin_passes_conformance() {
-        let app = autumn_web::app().plugin(SveltePlugin::new().components(&APP));
+        let app = autumn_web::app().plugin(SveltePlugin::new());
         let infos = app.plugin_route_infos().expect("route infos");
         let report = run_conformance(&ConformanceConfig::new(PLUGIN_NAME), &infos);
         assert!(report.passed(), "{}", report.to_text_report());
@@ -212,8 +233,8 @@ mod tests {
     #[tokio::test]
     async fn installing_twice_is_harmless() {
         let client = TestApp::new()
-            .plugin(SveltePlugin::new().components(&APP))
-            .plugin(SveltePlugin::new().components(&APP))
+            .plugin(SveltePlugin::new().bundle(&APP))
+            .plugin(SveltePlugin::new().bundle(&APP))
             .build();
         client
             .get(&SVELTE_ASSETS.url(LOADER_JS))
@@ -221,6 +242,69 @@ mod tests {
             .await
             .assert_ok();
         client.get(&APP.url("islands.js")).send().await.assert_ok();
+    }
+
+    static OTHER: PluginAssets = PluginAssets::from_files(
+        "svelte-plugin-other",
+        &[("islands.js", b"window.other = 1;")],
+    );
+
+    #[test]
+    fn name_lists_the_bundle_namespaces() {
+        assert_eq!(SveltePlugin::new().name(), PLUGIN_NAME);
+        assert_eq!(PLUGIN_NAME, env!("CARGO_PKG_NAME"));
+        assert_eq!(
+            SveltePlugin::new()
+                .bundle(&OTHER)
+                .bundle(&APP)
+                .bundle(&APP)
+                .name(),
+            "autumn-plugin-svelte[svelte-plugin-other,svelte-plugin-test]"
+        );
+    }
+
+    #[tokio::test]
+    async fn two_plugins_with_different_bundles_both_serve() {
+        let client = TestApp::new()
+            .plugin(SveltePlugin::new().bundle(&APP))
+            .plugin(SveltePlugin::new().bundle(&OTHER))
+            .build();
+        client.get(&APP.url("islands.js")).send().await.assert_ok();
+        client
+            .get(&OTHER.url("islands.js"))
+            .send()
+            .await
+            .assert_ok();
+        client
+            .get(&SVELTE_ASSETS.url(LOADER_JS))
+            .send()
+            .await
+            .assert_ok();
+    }
+
+    #[test]
+    fn two_plugins_pass_conformance_under_their_names() {
+        let first = SveltePlugin::new().bundle(&APP);
+        let second = SveltePlugin::new().bundle(&OTHER);
+        let names = [first.name(), second.name()];
+        let app = autumn_web::app().plugin(first).plugin(second);
+        let infos = app.plugin_route_infos().expect("route infos");
+        for name in names {
+            let report = run_conformance(&ConformanceConfig::new(name.as_ref()), &infos);
+            assert!(report.passed(), "{}", report.to_text_report());
+        }
+        assert!(
+            app.plugin_contracts()
+                .iter()
+                .all(|c| c.plugin == PLUGIN_NAME)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the namespace `svelte` belongs to autumn-plugin-svelte")]
+    fn bundle_in_the_loader_namespace_is_refused() {
+        static CLASH: PluginAssets = PluginAssets::from_files("svelte", &[("x.js", b"")]);
+        let _ = SveltePlugin::new().bundle(&CLASH);
     }
 
     #[tokio::test]
@@ -236,7 +320,7 @@ mod tests {
     #[tokio::test]
     async fn same_bundle_given_twice_is_harmless() {
         let client = TestApp::new()
-            .plugin(SveltePlugin::new().components(&APP).components(&APP))
+            .plugin(SveltePlugin::new().bundle(&APP).bundle(&APP))
             .build();
         client.get(&APP.url("islands.js")).send().await.assert_ok();
     }

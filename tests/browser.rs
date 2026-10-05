@@ -23,6 +23,12 @@ static FAKE: PluginAssets = PluginAssets::from_files(
     &[("fake.js", include_bytes!("fixtures/fake.js"))],
 );
 
+/// An ES-module bundle.
+static MODULE: PluginAssets = PluginAssets::from_files(
+    "svelte-module",
+    &[("module.mjs", include_bytes!("fixtures/module.mjs"))],
+);
+
 /// The real Svelte 5 bundle from `frontend/`.
 static REAL: PluginAssets = PluginAssets::from_files(
     "svelte-real",
@@ -44,6 +50,7 @@ fn head() -> Markup {
         (svelte_script())
         (svelte_bundle(&FAKE))
         (svelte_bundle(&REAL))
+        (svelte_bundle(&MODULE))
     }
 }
 
@@ -78,7 +85,11 @@ async fn order() -> Markup {
         (maud::DOCTYPE)
         html {
             head { (svelte_bundle(&FAKE)) (svelte_script()) (svelte_script()) }
-            body { (echo("e", "order")) }
+            body {
+                // A named element clobbers `window.autumnSvelte`.
+                div #autumnSvelte {}
+                (echo("e", "order"))
+            }
         }
     }
 }
@@ -125,6 +136,7 @@ async fn names() -> Markup {
         (Island::new("constructor").id("ctor"))
         (Island::new("hasOwnProperty").id("own"))
         (echo("ok", "ok"))
+        (Island::new("Module").id("module").props(&serde_json::json!({ "k": "m" })).expect("props"))
     })
 }
 
@@ -141,11 +153,103 @@ async fn empty() -> Markup {
     html! { p #cleared { "cleared" } }
 }
 
+#[get("/morph")]
+async fn morph() -> Markup {
+    page(&html! {
+        script src="/static/js/idiomorph.min.js" defer {}
+        div hx-ext="morph" {
+            button #morph hx-get="/morph/fragment" hx-target="#m1" hx-swap="morph:outerHTML" { "Morph" }
+            button #preserve hx-get="/preserve/fragment" hx-target="#pslot" { "Preserve" }
+            (echo("m1", "1"))
+            div #pslot { (echo("p1", "p").id("p1")) }
+        }
+    })
+}
+
+#[get("/morph/fragment")]
+async fn morph_fragment() -> Markup {
+    html! { (echo("m1", "9")) }
+}
+
+#[get("/preserve/fragment")]
+async fn preserve_fragment() -> Markup {
+    html! { div #p1 hx-preserve data-svelte-island="Echo" { "new fallback" } }
+}
+
+#[get("/history")]
+async fn history() -> Markup {
+    page(&html! {
+        button #go hx-get="/fragment/2" hx-target="#slot" hx-push-url="/history/2" { "Go" }
+        div #slot { (echo("i1", "1")) }
+        div style="height: 5000px" {}
+        (echo("visible", "visible").mount_when(MountWhen::Visible))
+        (Island::new("Nope").id("nope").fallback(html! { "nope fallback" }))
+        (Island::new("Boom").id("boom").fallback(html! { "boom fallback" }))
+    })
+}
+
+#[get("/ignore")]
+async fn ignore() -> Markup {
+    page(&html! {
+        (echo("outside", "outside"))
+        div #user data-svelte-ignore {
+            div #injected data-svelte-island="Echo" data-svelte-props=r#"{"k":"pwn"}"# { "user text" }
+        }
+    })
+}
+
+#[get("/nest")]
+async fn nest() -> Markup {
+    page(&html! { (Island::new("Nest").id("nest")) })
+}
+
+#[get("/revive.js")]
+async fn revive_js() -> ([(&'static str, &'static str); 1], &'static str) {
+    (
+        [("content-type", "text/javascript")],
+        "window.__revived = true;",
+    )
+}
+
+#[get("/foreign")]
+async fn foreign() -> Markup {
+    page(&html! {
+        div #foreign data-svelte-island="Echo" data-svelte-state="mounted" {
+            template data-svelte-fallback {
+                "foreign fallback"
+                script src="/revive.js" {}
+            }
+            span { "stale" }
+        }
+    })
+}
+
 fn app() -> TestApp {
     TestApp::new()
-        .plugin(SveltePlugin::new().components(&FAKE).components(&REAL))
+        .plugin(
+            SveltePlugin::new()
+                .bundle(&FAKE)
+                .bundle(&REAL)
+                .bundle(&MODULE),
+        )
         .routes(routes![
-            real, order, swap, fragment, lazy, errors, names, clock, empty
+            real,
+            order,
+            swap,
+            fragment,
+            lazy,
+            errors,
+            names,
+            clock,
+            empty,
+            morph,
+            morph_fragment,
+            preserve_fragment,
+            history,
+            ignore,
+            nest,
+            revive_js,
+            foreign
         ])
 }
 
@@ -450,6 +554,10 @@ async fn unknown_and_prototype_names_stay_pending() {
     let page = runner.page().await.expect("page");
     page.visit("/names").await.expect("visit");
     mounted(&page, "ok").await;
+    mounted(&page, "module").await;
+    page.expect_text("module m")
+        .await
+        .expect("ES module bundle");
     for id in ["later", "proto", "ctor", "own"] {
         assert_eq!(state(&page, id).await, "pending", "#{id}");
     }
@@ -467,4 +575,244 @@ async fn unknown_and_prototype_names_stay_pending() {
     page.expect_no_console_errors()
         .await
         .expect("clean console");
+}
+
+// Review fix: htmx history restore keeps the fallback of pending and
+// failed islands.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn history_restore_keeps_pending_and_error_fallbacks() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/history").await.expect("visit");
+    mounted(&page, "i1").await;
+    page.expect_attribute("#boom", "data-svelte-state", "error")
+        .await
+        .expect("error");
+    page.click("#go").await.expect("click");
+    mounted(&page, "i2").await;
+    run(&page, "history.back()").await;
+    wait_for(
+        &page,
+        "!!document.getElementById('i1') && \
+         document.getElementById('i1').getAttribute('data-svelte-state') === 'mounted'",
+    )
+    .await;
+    page.expect_attribute("#boom", "data-svelte-state", "error")
+        .await
+        .expect("error again");
+    for (id, state_value, text) in [
+        ("visible", "pending", "fallback visible"),
+        ("nope", "pending", "nope fallback"),
+        ("boom", "error", "boom fallback"),
+    ] {
+        assert_eq!(state(&page, id).await, state_value, "#{id}");
+        let shown: String = eval(
+            &page,
+            &format!("document.getElementById('{id}').textContent"),
+        )
+        .await;
+        assert_eq!(shown, text, "#{id} keeps its fallback");
+    }
+}
+
+// Review fix: an in-place morph remounts with the new props; hx-preserve
+// keeps the instance.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn morph_remounts_with_new_props_and_preserve_keeps_instance() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/morph").await.expect("visit");
+    mounted(&page, "m1").await;
+    mounted(&page, "p1").await;
+    page.click("#morph").await.expect("click");
+    wait_for(
+        &page,
+        "window.__svelteLog.includes('destroy:{\"k\":\"1\"}') && \
+         window.__svelteLog.includes('mount:{\"k\":\"9\"}')",
+    )
+    .await;
+    mounted(&page, "m1").await;
+    let echoes: Vec<String> = eval(
+        &page,
+        "Array.from(document.querySelectorAll('#m1 .echo')).map(function (e) { return e.textContent; })",
+    )
+    .await;
+    assert_eq!(echoes, ["{\"k\":\"9\"}"]);
+    page.click("#preserve").await.expect("click");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let log = log(&page).await;
+    assert!(
+        !log.contains(&"destroy:{\"k\":\"p\"}".to_owned()),
+        "{log:?}"
+    );
+    assert_eq!(state(&page, "p1").await, "mounted");
+    page.expect_no_console_errors()
+        .await
+        .expect("clean console");
+}
+
+// Review fix: a registration from inside mount() does not mount twice.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn reentrant_registration_mounts_once() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/names").await.expect("visit");
+    mounted(&page, "ok").await;
+    run(
+        &page,
+        "window.__n = 0; autumnSvelte.push({ \
+           mount: function (C, o) { return C(o.target); }, unmount: function () {}, \
+           components: { Later: function (t) { \
+             window.__n++; \
+             autumnSvelte.push({ mount: function () { return {}; }, unmount: function () {}, \
+               components: { Other: function () {} } }); \
+             t.append('L' + window.__n); return {}; } } })",
+    )
+    .await;
+    mounted(&page, "later").await;
+    let result: (u32, String) = eval(
+        &page,
+        "[window.__n, document.getElementById('later').textContent]",
+    )
+    .await;
+    assert_eq!(result, (1, "L1".to_owned()));
+}
+
+// Review fix: remove, register, re-add in one task still mounts.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn remove_register_readd_in_one_task_mounts() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/names").await.expect("visit");
+    mounted(&page, "ok").await;
+    run(
+        &page,
+        "var e = document.getElementById('later'); var p = e.parentNode; e.remove(); \
+         autumnSvelte.push({ mount: function (C, o) { return C(o.target); }, unmount: function () {}, \
+           components: { Later: function (t) { t.append('later mounted'); return {}; } } }); \
+         p.appendChild(e);",
+    )
+    .await;
+    mounted(&page, "later").await;
+    page.expect_text("later mounted").await.expect("mounted");
+}
+
+// Review fix: teardown clears the state; a rejected unmount is handled.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn teardown_clears_state_and_handles_async_unmount() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/names").await.expect("visit");
+    mounted(&page, "ok").await;
+    run(
+        &page,
+        "autumnSvelte.push({ mount: function (C, o) { return C(o.target); }, \
+           unmount: function () { return Promise.reject(new Error('async unmount')); }, \
+           components: { Later: function (t) { t.append('x'); return {}; } } })",
+    )
+    .await;
+    mounted(&page, "later").await;
+    run(
+        &page,
+        "window.__ok = document.getElementById('ok'); window.__ok.remove(); \
+         window.__later = document.getElementById('later'); window.__later.remove();",
+    )
+    .await;
+    wait_for(
+        &page,
+        "window.__svelteLog.includes('destroy:{\"k\":\"ok\"}')",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let states: (bool, bool) = eval(
+        &page,
+        "[window.__ok.hasAttribute('data-svelte-state'), \
+          window.__later.hasAttribute('data-svelte-state')]",
+    )
+    .await;
+    assert_eq!(states, (false, false));
+    let log = log(&page).await;
+    assert!(!log.contains(&"unhandledrejection".to_owned()), "{log:?}");
+    assert!(
+        page.console_errors()
+            .iter()
+            .any(|e| e.contains("failed to unmount")),
+        "{:?}",
+        page.console_errors()
+    );
+}
+
+// Security review fix: islands inside `data-svelte-ignore` never mount.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn ignore_boundary_blocks_injected_islands() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/ignore").await.expect("visit");
+    mounted(&page, "outside").await;
+    run(
+        &page,
+        "var d = document.createElement('div'); d.id = 'late'; \
+         d.setAttribute('data-svelte-island', 'Echo'); \
+         document.getElementById('user').appendChild(d); \
+         autumnSvelte.scan(document);",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let untouched: (bool, bool) = eval(
+        &page,
+        "[document.getElementById('injected').hasAttribute('data-svelte-state'), \
+          document.getElementById('late').hasAttribute('data-svelte-state')]",
+    )
+    .await;
+    assert_eq!(untouched, (false, false));
+    let log = log(&page).await;
+    assert!(!log.iter().any(|l| l.contains("pwn")), "{log:?}");
+    page.expect_no_console_errors()
+        .await
+        .expect("clean console");
+}
+
+// Security review fix: self-nesting islands stop at the depth limit.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn nested_islands_stop_at_the_depth_limit() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/nest").await.expect("visit");
+    wait_for(
+        &page,
+        "document.querySelectorAll('[data-svelte-state=error]').length === 1",
+    )
+    .await;
+    let mounted_count: u32 = eval(
+        &page,
+        "document.querySelectorAll('[data-svelte-state=mounted]').length",
+    )
+    .await;
+    assert_eq!(mounted_count, 16);
+}
+
+// Security review fix: a fallback template from markup does not run scripts.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn foreign_fallback_template_does_not_revive_scripts() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/foreign").await.expect("visit");
+    mounted(&page, "foreign").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let revived: bool = eval(&page, "window.__revived === true").await;
+    assert!(!revived, "the template script must not run");
+    let text: String = eval(
+        &page,
+        "document.querySelector('#foreign > template').content.textContent",
+    )
+    .await;
+    assert_eq!(text, "foreign fallback");
 }

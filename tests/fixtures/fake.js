@@ -9,6 +9,10 @@
     });
   });
 
+  window.addEventListener("unhandledrejection", function () {
+    log.push("unhandledrejection");
+  });
+
   function mount(Component, options) {
     return Component(options.target, options.props);
   }
@@ -46,9 +50,23 @@
     throw new Error("partial");
   }
 
-  (window.autumnSvelte = window.autumnSvelte || []).push({
+  // Renders an island of itself, without end.
+  function Nest(target) {
+    var child = document.createElement("div");
+    child.setAttribute("data-svelte-island", "Nest");
+    target.appendChild(child);
+    return { destroy: function () {} };
+  }
+
+  // The documented registration. It also works when an element with
+  // id="autumnSvelte" clobbers the global.
+  var queue = window.autumnSvelte;
+  if (!Array.isArray(queue) && !(queue && queue.loader === true)) {
+    queue = window.autumnSvelte = [];
+  }
+  queue.push({
     mount: mount,
     unmount: unmount,
-    components: { Echo: Echo, Boom: Boom, Partial: Partial },
+    components: { Echo: Echo, Boom: Boom, Partial: Partial, Nest: Nest },
   });
 })();

@@ -4,8 +4,11 @@
  * App bundles register components on a queue, so script order does not
  * matter:
  *
- *   (window.autumnSvelte = window.autumnSvelte || [])
- *     .push({ mount, unmount, components: { Counter } });
+ *   let queue = window.autumnSvelte;
+ *   if (!Array.isArray(queue) && queue?.loader !== true) {
+ *     queue = window.autumnSvelte = [];
+ *   }
+ *   queue.push({ mount, unmount, components: { Counter } });
  *
  * One MutationObserver mounts added islands and unmounts removed islands
  * (htmx swaps, morphs, manual DOM changes).
@@ -26,6 +29,11 @@
   }
 
   var SELECTOR = "[data-svelte-island]";
+  // Islands in an element with this attribute never mount. Wrap user HTML
+  // in it, as with htmx hx-disable.
+  var IGNORE = "[data-svelte-ignore]";
+  // A component that renders islands of itself stops at this depth.
+  var MAX_DEPTH = 16;
   var STATE = "data-svelte-state";
   var FALLBACK = "data-svelte-fallback";
 
@@ -105,8 +113,19 @@
     record.state = "error";
     pending.delete(el);
     el.setAttribute(STATE, "error");
-    console.error('autumn-svelte: island "' + record.name + '" failed to mount', error);
+    console.error("autumn-svelte: island failed to mount:", record.name, error);
     emit(el, "autumn:svelte:error", { name: record.name, error: error });
+  }
+
+  // The number of island ancestors of `el`.
+  function depthOf(el) {
+    var depth = 0;
+    var ancestor = el.parentElement && el.parentElement.closest(SELECTOR);
+    while (ancestor && depth < MAX_DEPTH) {
+      depth++;
+      ancestor = ancestor.parentElement && ancestor.parentElement.closest(SELECTOR);
+    }
+    return depth;
   }
 
   function tryMount(el) {
@@ -118,6 +137,10 @@
     if (!entry) {
       return; // Stays pending until a bundle registers the name.
     }
+    if (depthOf(el) >= MAX_DEPTH) {
+      fail(el, record, new Error("islands are nested deeper than " + MAX_DEPTH));
+      return;
+    }
     var props;
     try {
       props = parseProps(el);
@@ -126,16 +149,29 @@
       return;
     }
     var template = stashFallback(el);
+    // "mounting" stops a second mount when mount() registers a bundle.
+    record.state = "mounting";
+    pending.delete(el);
+    var instance;
     try {
-      record.instance = entry.mount(entry.component, { target: el, props: props });
+      instance = entry.mount(entry.component, { target: el, props: props });
     } catch (error) {
-      restoreFallback(el, template);
-      fail(el, record, error);
+      if (records.get(el) === record) {
+        restoreFallback(el, template);
+        fail(el, record, error);
+      }
       return;
     }
+    record.instance = instance;
     record.entry = entry;
+    record.template = template;
     record.state = "mounted";
-    pending.delete(el);
+    if (records.get(el) !== record) {
+      // mount() removed its own island. Unmount the new instance.
+      records.set(el, record);
+      teardown(el);
+      return;
+    }
     el.setAttribute(STATE, "mounted");
     emit(el, "autumn:svelte:mount", { name: record.name });
   }
@@ -187,30 +223,34 @@
   }
 
   function setup(el) {
-    if (records.has(el) || !el.isConnected) {
+    if (!el.isConnected || el.closest(IGNORE)) {
       return;
     }
-    if (el.hasAttribute(STATE)) {
-      // Markup from an earlier mount (htmx history restore, a clone). Its
-      // component DOM is stale; the fallback template is not.
-      clearExceptFallback(el, fallbackOf(el));
-      var stale = fallbackOf(el);
-      if (stale) {
-        restoreFallback(el, stale);
-      }
+    if (records.has(el)) {
+      tryMount(el); // A pending island can be ready now.
+      return;
+    }
+    // Markup from an earlier mount (htmx history restore, a clone) has a
+    // fallback template and stale component DOM. Put the fallback back.
+    var stale = fallbackOf(el);
+    if (stale) {
+      restoreFallback(el, stale);
     }
     var record = {
       name: el.getAttribute("data-svelte-island") || "",
+      props: el.getAttribute("data-svelte-props"),
+      when: el.getAttribute("data-svelte-mount"),
       state: "pending",
       ready: false,
       cancel: null,
       instance: null,
       entry: null,
+      template: null,
     };
     records.set(el, record);
     pending.add(el);
     el.setAttribute(STATE, "pending");
-    var cancel = schedule(el, el.getAttribute("data-svelte-mount"));
+    var cancel = schedule(el, record.when);
     if (records.get(el) === record && !record.ready) {
       record.cancel = cancel;
     }
@@ -223,16 +263,21 @@
     }
     records.delete(el);
     pending.delete(el);
+    el.removeAttribute(STATE);
     if (record.cancel) {
       record.cancel();
     }
     if (record.state !== "mounted") {
       return;
     }
+    var logUnmountError = function (error) {
+      console.error("autumn-svelte: island failed to unmount:", record.name, error);
+    };
     try {
-      record.entry.unmount(record.instance);
+      // Svelte 5 unmount() can return a Promise.
+      Promise.resolve(record.entry.unmount(record.instance)).catch(logUnmountError);
     } catch (error) {
-      console.error('autumn-svelte: island "' + record.name + '" failed to unmount', error);
+      logUnmountError(error);
     }
     emit(document, "autumn:svelte:unmount", { name: record.name, element: el });
   }
@@ -269,7 +314,7 @@
     }
     Object.keys(entry.components).forEach(function (name) {
       if (registry.has(name)) {
-        console.warn('autumn-svelte: component "' + name + '" is already registered; the first one stays');
+        console.error("autumn-svelte: component already registered; the first one stays:", name);
         return;
       }
       registry.set(name, {
@@ -281,8 +326,42 @@
     Array.from(pending).forEach(tryMount);
   }
 
+  // True when something other than the loader changed a recorded island:
+  // its attributes, its state attribute, or its fallback template (an
+  // in-place morph does this).
+  function changedInPlace(el, record) {
+    return (
+      el.getAttribute("data-svelte-island") !== record.name ||
+      el.getAttribute("data-svelte-props") !== record.props ||
+      el.getAttribute("data-svelte-mount") !== record.when ||
+      el.getAttribute(STATE) !== visibleState(record) ||
+      (record.template !== null && record.template.parentNode !== el)
+    );
+  }
+
+  // The state attribute value the loader writes for a record.
+  function visibleState(record) {
+    return record.state === "mounting" ? "pending" : record.state;
+  }
+
+  function remount(el) {
+    teardown(el);
+    if (el.hasAttribute("data-svelte-island")) {
+      setup(el);
+    }
+  }
+
   function onMutations(mutations) {
+    var touched = new Set();
     for (var i = 0; i < mutations.length; i++) {
+      var target = mutations[i].target;
+      if (mutations[i].type === "attributes") {
+        touched.add(target);
+        continue;
+      }
+      if (records.has(target)) {
+        touched.add(target); // Its children changed.
+      }
       var removed = mutations[i].removedNodes;
       for (var r = 0; r < removed.length; r++) {
         islandsIn(removed[r]).forEach(function (el) {
@@ -298,13 +377,21 @@
         }
       }
     }
+    touched.forEach(function (el) {
+      var record = records.get(el);
+      if (record && el.isConnected && changedInPlace(el, record)) {
+        remount(el);
+      } else if (!record && el.isConnected && el.hasAttribute("data-svelte-island")) {
+        setup(el); // An element became an island.
+      }
+    });
   }
 
   function warnMissing() {
     pending.forEach(function (el) {
       var record = records.get(el);
       if (record && record.ready && !registry.has(record.name)) {
-        console.warn('autumn-svelte: no component "' + record.name + '" is registered');
+        console.warn("autumn-svelte: no component is registered with the name:", record.name);
       }
     });
   }
@@ -327,6 +414,8 @@
   new MutationObserver(onMutations).observe(document.documentElement, {
     childList: true,
     subtree: true,
+    attributes: true,
+    attributeFilter: ["data-svelte-island", "data-svelte-props", "data-svelte-mount", STATE],
   });
 
   if (document.readyState === "loading") {

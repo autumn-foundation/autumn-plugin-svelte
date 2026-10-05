@@ -47,11 +47,11 @@ export default defineConfig({
 import { mount, unmount } from "svelte";
 import Counter from "./Counter.svelte";
 
-(window.autumnSvelte = window.autumnSvelte || []).push({
-  mount,
-  unmount,
-  components: { Counter },
-});
+let queue = window.autumnSvelte;
+if (!Array.isArray(queue) && queue?.loader !== true) {
+  queue = window.autumnSvelte = []; // an id="autumnSvelte" element can clobber it
+}
+queue.push({ mount, unmount, components: { Counter } });
 ```
 
 Run `npm run build`. Commit the output.
@@ -71,7 +71,7 @@ static ISLANDS: PluginAssets = PluginAssets::from_files(
 );
 
 autumn_web::app()
-    .plugin(SveltePlugin::new().components(&ISLANDS))
+    .plugin(SveltePlugin::new().bundle(&ISLANDS))
     // ...
 ```
 

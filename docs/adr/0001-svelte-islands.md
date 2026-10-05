@@ -18,7 +18,7 @@ No Rust tool can compile or server-render Svelte. `autumn-web` 0.8.0 gives
 2. The app compiles its components with Vite and Svelte 5. The entry file
    pushes `{ mount, unmount, components }` on `window.autumnSvelte`.
 3. The app embeds the build output as its own `PluginAssets` bundle and
-   gives it to `SveltePlugin::components`.
+   gives it to `SveltePlugin::bundle`.
 4. Rust renders each island with `Island`:
 
    ```html

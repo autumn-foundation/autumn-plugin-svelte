@@ -27,6 +27,34 @@ impl MountWhen {
     }
 }
 
+/// The kind of a JSON value that is not an object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum JsonKind {
+    /// `null`.
+    Null,
+    /// `true` or `false`.
+    Boolean,
+    /// A number.
+    Number,
+    /// A string.
+    String,
+    /// An array.
+    Array,
+}
+
+impl std::fmt::Display for JsonKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Null => "null",
+            Self::Boolean => "a boolean",
+            Self::Number => "a number",
+            Self::String => "a string",
+            Self::Array => "an array",
+        })
+    }
+}
+
 /// The error from [`Island::props`].
 ///
 /// It converts to `AutumnError` (status 500), so `?` works in a handler.
@@ -38,7 +66,7 @@ pub enum PropsError {
     Serialize(#[from] serde_json::Error),
     /// The value is JSON, but not a JSON object.
     #[error("island props must be a JSON object, not {0}")]
-    NotAnObject(&'static str),
+    NotAnObject(JsonKind),
 }
 
 /// One Svelte island: an element that the loader mounts a component into.
@@ -103,11 +131,11 @@ impl Island {
         let json = serde_json::to_string(props)?;
         let kind = match json.as_bytes().first() {
             Some(b'{') => None,
-            Some(b'[') => Some("an array"),
-            Some(b'"') => Some("a string"),
-            Some(b'n') => Some("null"),
-            Some(b't' | b'f') => Some("a boolean"),
-            _ => Some("a number"),
+            Some(b'[') => Some(JsonKind::Array),
+            Some(b'"') => Some(JsonKind::String),
+            Some(b'n') => Some(JsonKind::Null),
+            Some(b't' | b'f') => Some(JsonKind::Boolean),
+            _ => Some(JsonKind::Number),
         };
         if let Some(kind) = kind {
             return Err(PropsError::NotAnObject(kind));
@@ -221,18 +249,21 @@ mod tests {
 
     #[test]
     fn non_object_props_are_refused() {
-        for (value, kind) in [
-            (serde_json::json!(5), "a number"),
-            (serde_json::json!([1]), "an array"),
-            (serde_json::json!("s"), "a string"),
-            (serde_json::json!(null), "null"),
-            (serde_json::json!(true), "a boolean"),
+        for (value, json_kind, kind) in [
+            (serde_json::json!(5), JsonKind::Number, "a number"),
+            (serde_json::json!(-1.5), JsonKind::Number, "a number"),
+            (serde_json::json!([1]), JsonKind::Array, "an array"),
+            (serde_json::json!("s"), JsonKind::String, "a string"),
+            (serde_json::json!(null), JsonKind::Null, "null"),
+            (serde_json::json!(true), JsonKind::Boolean, "a boolean"),
+            (serde_json::json!(false), JsonKind::Boolean, "a boolean"),
         ] {
             let err = Island::new("X").props(&value).unwrap_err();
             assert!(
-                matches!(err, PropsError::NotAnObject(k) if k == kind),
+                matches!(err, PropsError::NotAnObject(k) if k == json_kind),
                 "{err}"
             );
+            assert_eq!(json_kind.to_string(), kind);
             assert_eq!(
                 err.to_string(),
                 format!("island props must be a JSON object, not {kind}")

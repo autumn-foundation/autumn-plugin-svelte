@@ -29,7 +29,7 @@ seam for Svelte. Each app must write its own glue.
 8. Send DOM events (`autumn:svelte:mount`, `autumn:svelte:unmount`,
    `autumn:svelte:error`), so htmx `hx-trigger` can react.
 9. Install the app's compiled bundle through the plugin
-   (`SveltePlugin::components`). The app gets the same URL and SRI rules.
+   (`SveltePlugin::bundle`). The app gets the same URL and SRI rules.
 10. Give a reference Vite + Svelte 5 project. Commit its output, so the
     example and the tests need no Node.
 11. Vendor Svelte and use an import map. **Rejected**: an import map is an
@@ -96,7 +96,7 @@ See [ADR 0001](adr/0001-svelte-islands.md).
 
 1. **AC1.** `SveltePlugin::new()` installs the loader bundle under
    `/static/_plugins/svelte/` with fingerprinted, `immutable` URLs and SRI.
-2. **AC2.** `SveltePlugin::components(&BUNDLE)` installs an app bundle of
+2. **AC2.** `SveltePlugin::bundle(&BUNDLE)` installs an app bundle of
    compiled Svelte components with the same URL and cache rules.
 3. **AC3.** `svelte_script()` and `svelte_bundle(&BUNDLE)` emit `<script>`
    and `<link>` tags with SRI and `crossorigin="anonymous"`.

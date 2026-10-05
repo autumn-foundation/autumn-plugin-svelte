@@ -30,7 +30,7 @@
 //!
 //! # async fn run() {
 //! autumn_web::app()
-//!     .plugin(SveltePlugin::new().components(&ISLANDS))
+//!     .plugin(SveltePlugin::new().bundle(&ISLANDS))
 //!     .routes(routes![index])
 //!     .run()
 //!     .await;
@@ -42,7 +42,12 @@
 //! ```js
 //! import { mount, unmount } from "svelte";
 //! import Counter from "./Counter.svelte";
-//! (window.autumnSvelte = window.autumnSvelte || []).push({ mount, unmount, components: { Counter } });
+//!
+//! let queue = window.autumnSvelte;
+//! if (!Array.isArray(queue) && queue?.loader !== true) {
+//!   queue = window.autumnSvelte = []; // an id="autumnSvelte" element can clobber it
+//! }
+//! queue.push({ mount, unmount, components: { Counter } });
 //! ```
 //!
 //! # Limits
@@ -57,6 +62,6 @@ mod plugin;
 mod tags;
 
 pub use assets::{ASSETS_NAMESPACE, LOADER_JS, SVELTE_ASSETS};
-pub use island::{Island, MountWhen, PropsError};
+pub use island::{Island, JsonKind, MountWhen, PropsError};
 pub use plugin::{PLUGIN_NAME, SveltePlugin};
 pub use tags::{svelte_bundle, svelte_script};

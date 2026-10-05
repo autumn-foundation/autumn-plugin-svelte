@@ -20,14 +20,18 @@ pub fn svelte_script() -> Markup {
     SVELTE_ASSETS.deferred_script_tag(LOADER_JS)
 }
 
-/// Renders the tags of an app bundle: one `<link rel="stylesheet">` for each
-/// `.css` file, then one `<script defer>` for each `.js` file.
+/// Renders the tags of an app bundle, in this order:
 ///
-/// Files are in logical-path order. Other files (fonts, `.mjs`, source maps)
-/// get no tag. Each tag has the fingerprinted URL and `integrity`.
+/// 1. `<link rel="stylesheet">` for each `.css` file.
+/// 2. `<script defer>` for each `.js` file (a classic script, Vite
+///    `formats: ["iife"]`).
+/// 3. `<script type="module">` for each `.mjs` file (an ES module, Vite
+///    `formats: ["es"]`).
 ///
-/// Build the JavaScript as a classic script (Vite `formats: ["iife"]`). A
-/// `<script defer>` tag cannot load an ES module.
+/// Files in a group are in logical-path order. Other files (fonts, source
+/// maps) get no tag. Each tag has the fingerprinted URL and `integrity`.
+///
+/// Every `.js` file gets a tag, so do not split the build into chunks.
 #[must_use]
 pub fn svelte_bundle(bundle: &PluginAssets) -> Markup {
     let paths = |ext: &'static str| {
@@ -39,6 +43,10 @@ pub fn svelte_bundle(bundle: &PluginAssets) -> Markup {
     maud::html! {
         @for path in paths(".css") { (bundle.stylesheet_tag(path)) }
         @for path in paths(".js") { (bundle.deferred_script_tag(path)) }
+        @for asset in paths(".mjs").filter_map(|path| bundle.get(path)) {
+            script type="module" src=(asset.url()) integrity=(asset.integrity())
+                crossorigin="anonymous" {}
+        }
     }
 }
 
@@ -82,13 +90,25 @@ mod tests {
             APP.deferred_script_tag("b.js").into_string(),
         ]
         .concat();
-        assert_eq!(html, expected);
+        assert!(html.starts_with(&expected), "{html}");
+    }
+
+    #[test]
+    fn mjs_files_get_module_tags_after_classic_scripts() {
+        let html = svelte_bundle(&APP).into_string();
+        let module = APP.get("chunk.mjs").unwrap();
+        let tag = format!(
+            r#"<script type="module" src="{}" integrity="{}" crossorigin="anonymous"></script>"#,
+            module.url(),
+            module.integrity()
+        );
+        assert!(html.ends_with(&tag), "{html}");
     }
 
     #[test]
     fn bundle_tags_skip_other_files() {
         let html = svelte_bundle(&APP).into_string();
-        for skipped in ["chunk.", "font.", ".map"] {
+        for skipped in ["font.", ".map"] {
             assert!(!html.contains(skipped), "{skipped} has no tag: {html}");
         }
     }
