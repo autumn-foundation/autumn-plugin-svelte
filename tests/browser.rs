@@ -108,14 +108,33 @@ async fn fragment(Path(n): Path<u32>) -> Markup {
     html! { (echo(&format!("i{n}"), &n.to_string())) }
 }
 
+#[get("/probe.js")]
+async fn probe_js() -> ([(&'static str, &'static str); 1], &'static str) {
+    (
+        [("content-type", "text/javascript")],
+        include_str!("fixtures/probe.js"),
+    )
+}
+
 #[get("/lazy")]
 async fn lazy() -> Markup {
-    page(&html! {
+    html! {
+        (maud::DOCTYPE)
+        html {
+            head { script src="/probe.js" {} (head()) }
+            body { (lazy_body()) }
+        }
+    }
+}
+
+fn lazy_body() -> Markup {
+    html! {
         (echo("idle", "idle").mount_when(MountWhen::Idle))
         div style="height: 5000px" {}
         (echo("visible", "visible").mount_when(MountWhen::Visible))
         (echo("gone", "gone").mount_when(MountWhen::Visible))
-    })
+        (echo("idle-gone", "idle-gone").mount_when(MountWhen::Idle))
+    }
 }
 
 #[get("/errors")]
@@ -249,7 +268,8 @@ fn app() -> TestApp {
             ignore,
             nest,
             revive_js,
-            foreign
+            foreign,
+            probe_js
         ])
 }
 
@@ -347,8 +367,12 @@ async fn real_svelte_component_mounts_with_props_and_reacts() {
         .header("content-security-policy")
         .expect("CSP header")
         .to_owned();
-    assert!(csp.contains("script-src 'self'"), "{csp}");
-    assert!(!csp.contains("unsafe-eval"), "{csp}");
+    let script_src: Vec<&str> = csp
+        .split(';')
+        .map(str::trim)
+        .filter(|d| d.starts_with("script-src"))
+        .collect();
+    assert_eq!(script_src, ["script-src 'self'"], "{csp}");
 }
 
 // AC6 with real Svelte: htmx removes a component with a timer.
@@ -484,22 +508,35 @@ async fn restored_markup_mounts_again_from_the_fallback() {
     assert_eq!(fallback, "fallback 1");
 }
 
-// AC7: `idle` and `visible` wait for their trigger.
+// AC7: `idle` and `visible` wait for their trigger; teardown cancels it.
 #[tokio::test]
 #[ignore = "requires Chromium"]
 async fn idle_and_visible_wait_for_their_trigger() {
     let runner = start().await;
     let page = runner.page().await.expect("page");
     page.visit("/lazy").await.expect("visit");
-    mounted(&page, "idle").await;
+    wait_for(
+        &page,
+        "!!window.autumnSvelte && window.autumnSvelte.loader === true",
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(state(&page, "visible").await, "pending");
+    assert_eq!(state(&page, "idle").await, "pending", "idle waits");
+    assert_eq!(state(&page, "visible").await, "pending", "visible waits");
     run(
         &page,
         "document.getElementById('gone').remove(); \
-         document.getElementById('visible').scrollIntoView()",
+         document.getElementById('idle-gone').remove();",
     )
     .await;
+    wait_for(
+        &page,
+        "window.__disconnects === 1 && window.__idleCancels === 1",
+    )
+    .await;
+    run(&page, "window.__runIdle()").await;
+    mounted(&page, "idle").await;
+    run(&page, "document.getElementById('visible').scrollIntoView()").await;
     mounted(&page, "visible").await;
     run(&page, "window.scrollTo(0, document.body.scrollHeight)").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -815,4 +852,34 @@ async fn foreign_fallback_template_does_not_revive_scripts() {
     )
     .await;
     assert_eq!(text, "foreign fallback");
+}
+
+// The first registration of a name stays; a second one is an error.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn duplicate_registration_keeps_the_first() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/names").await.expect("visit");
+    mounted(&page, "ok").await;
+    run(
+        &page,
+        "autumnSvelte.push({ mount: function (C, o) { return C(o.target); }, unmount: function () {}, \
+           components: { Echo: function (t) { t.append('impostor'); return {}; } } }); \
+         var d = document.createElement('div'); d.id = 'second'; \
+         d.setAttribute('data-svelte-island', 'Echo'); \
+         d.setAttribute('data-svelte-props', '{\"k\":\"second\"}'); \
+         document.body.appendChild(d);",
+    )
+    .await;
+    mounted(&page, "second").await;
+    let text: String = eval(&page, "document.getElementById('second').textContent").await;
+    assert_eq!(text, "{\"k\":\"second\"}");
+    assert!(
+        page.console_errors()
+            .iter()
+            .any(|e| e.contains("already registered")),
+        "{:?}",
+        page.console_errors()
+    );
 }

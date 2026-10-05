@@ -8,8 +8,8 @@
 Autumn renders HTML on the server with Maud and htmx. Some page parts need
 rich client state. Svelte compiles components to JavaScript at build time.
 No Rust tool can compile or server-render Svelte. `autumn-web` 0.8.0 gives
-`PluginAssets`: files compiled into a crate, served with fingerprinted URLs,
-`immutable` cache and SRI hashes.
+`PluginAssets`. Autumn compiles the files into the crate. It serves them
+with fingerprinted URLs, `immutable` cache and SRI hashes.
 
 ## Decision
 
@@ -29,6 +29,10 @@ No Rust tool can compile or server-render Svelte. `autumn-web` 0.8.0 gives
 5. The loader mounts each island on the client (no hydration). It keeps the
    fallback in a `<template data-svelte-fallback>` child.
 6. One `MutationObserver` mounts added islands and unmounts removed islands.
+   It also watches island attributes and the fallback template. Thus an
+   in-place morph mounts the island again.
+7. Islands in a `data-svelte-ignore` element never mount. Islands stop at a
+   nesting depth of 16.
 
 ```mermaid
 sequenceDiagram
@@ -51,7 +55,9 @@ sequenceDiagram
 - Good: no inline script, so the default CSP works.
 - Good: the app selects the Svelte version. Two bundles can use two
   versions.
-- Good: no Node at run time. One binary at deploy.
-- Bad: no server-side render of the component. The fallback content is the
-  first paint.
+- Good: no Node at run time. You deploy one binary.
+- Bad: the server does not render the component. The fallback content is
+  the first paint.
+- Bad: user HTML can make islands. Apps must use `data-svelte-ignore` and a
+  sanitizer that removes `data-svelte-*`.
 - Bad: the app needs Node to build its components.

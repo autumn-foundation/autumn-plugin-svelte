@@ -1,4 +1,4 @@
-/* Test bundle. It keeps the loader contract with fake components, and it
+/* Test bundle with fake components. It obeys the loader contract. It
  * writes each lifecycle step to window.__svelteLog. */
 (function () {
   "use strict";

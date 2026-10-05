@@ -25,6 +25,3 @@ rustc-ice-*.txt
 
 # Node (reference frontend)
 /frontend/node_modules
-
-# Chromium test artifacts
-/target-system-tests

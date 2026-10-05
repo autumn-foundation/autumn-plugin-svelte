@@ -1,7 +1,8 @@
 //! [`SveltePlugin`]: installs the loader and the app bundles.
 //!
-//! Each bundle mounts under `/static/_plugins/<namespace>/` through
-//! `AppBuilder::plugin_assets`. No configuration, no startup hooks.
+//! Autumn serves each bundle under `/static/_plugins/<namespace>/` through
+//! `AppBuilder::plugin_assets`. The plugin has no configuration and no
+//! start-up hooks.
 
 use std::borrow::Cow;
 
@@ -53,7 +54,7 @@ impl SveltePlugin {
 
     /// Adds an app bundle of compiled Svelte components.
     ///
-    /// The same bundle two times is harmless.
+    /// When you add the same bundle two times, the plugin uses it one time.
     ///
     /// # Panics
     ///

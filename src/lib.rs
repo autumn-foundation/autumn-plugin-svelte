@@ -50,9 +50,13 @@
 //! queue.push({ mount, unmount, components: { Counter } });
 //! ```
 //!
+//! Put user HTML in an element with `data-svelte-ignore`. The loader does not
+//! mount islands in it.
+//!
 //! # Limits
 //!
-//! - No server-side render of the component. The fallback is the first paint.
+//! - The server does not render the component. The fallback is the first
+//!   paint.
 //! - You need Node to build components. You do not need Node at run time.
 //! - Props go in an HTML attribute. Keep them small.
 

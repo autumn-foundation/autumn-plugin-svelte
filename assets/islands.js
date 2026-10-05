@@ -17,8 +17,8 @@
  * Events: autumn:svelte:mount and autumn:svelte:error on the island (they
  * bubble); autumn:svelte:unmount on document (the island is detached).
  *
- * No eval, no inline script, no HTML parsing: it works with
- * CSP script-src 'self'.
+ * The loader uses no eval, no inline script and no HTML parser. Thus it
+ * works with CSP script-src 'self'.
  */
 (function () {
   "use strict";
@@ -40,7 +40,7 @@
   // name -> { component, mount, unmount }. A Map, so names such as
   // "__proto__" and "constructor" are plain keys.
   var registry = new Map();
-  // element -> record. A record is deleted at teardown.
+  // element -> record. Teardown deletes the record.
   var records = new WeakMap();
   // Elements that wait for a component or a trigger.
   var pending = new Set();
@@ -406,7 +406,8 @@
       }
       return registry.size;
     },
-    // Mounts new islands in `root` (default: document). Safe to repeat.
+    // Mounts new islands in `root` (default: document). You can call it
+    // more than one time.
     scan: scan,
   };
   queued.forEach(register);

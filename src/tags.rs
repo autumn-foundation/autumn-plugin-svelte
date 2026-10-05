@@ -91,6 +91,21 @@ mod tests {
         ]
         .concat();
         assert!(html.starts_with(&expected), "{html}");
+        // Do not trust the autumn-web helpers alone.
+        let css = APP.get("style.css").unwrap();
+        assert!(
+            html.starts_with(&format!(
+                r#"<link rel="stylesheet" href="{}" integrity="sha384-"#,
+                css.url()
+            )),
+            "{html}"
+        );
+        assert_eq!(
+            html.matches(r#"crossorigin="anonymous""#).count(),
+            4,
+            "{html}"
+        );
+        assert_eq!(html.matches(r#"integrity="sha384-"#).count(), 4, "{html}");
     }
 
     #[test]

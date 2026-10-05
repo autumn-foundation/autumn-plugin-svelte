@@ -340,7 +340,7 @@ mod tests {
     }
 
     proptest! {
-        /// Any string props survive the attribute round trip.
+        /// The attribute keeps all string props without change.
         #[test]
         fn props_round_trip(map in proptest::collection::btree_map(".*", ".*", 0..6)) {
             let html = Island::new("X").props(&map).unwrap().render().into_string();

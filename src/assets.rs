@@ -1,4 +1,4 @@
-//! The loader bundle, embedded at compile time.
+//! The loader bundle. The compiler embeds it in the crate.
 
 use autumn_web::assets::PluginAssets;
 

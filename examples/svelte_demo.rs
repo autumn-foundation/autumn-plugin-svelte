@@ -100,3 +100,39 @@ async fn clock_on() -> Markup {
 async fn clock_off() -> Markup {
     clock_controls(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use autumn_web::test::{TestApp, TestClient};
+
+    fn client() -> TestClient {
+        TestApp::new()
+            .plugin(SveltePlugin::new().bundle(&ISLANDS))
+            .routes(routes![index, clock_on, clock_off])
+            .build()
+    }
+
+    #[tokio::test]
+    async fn index_renders_islands_and_tags() {
+        let client = client();
+        let html = client.get("/").send().await.assert_ok().text();
+        assert_eq!(html.matches(r#"data-svelte-island="Counter""#).count(), 2);
+        assert!(html.contains(r#"data-svelte-mount="visible""#), "{html}");
+        assert!(html.contains(&ISLANDS.url("islands.js")), "{html}");
+        assert!(html.contains(&ISLANDS.url("islands.css")), "{html}");
+        assert!(html.contains("/static/_plugins/svelte/islands."), "{html}");
+        for asset in ISLANDS.iter() {
+            client.get(asset.url()).send().await.assert_ok();
+        }
+    }
+
+    #[tokio::test]
+    async fn clock_fragments_toggle() {
+        let client = client();
+        let on = client.get("/clock/on").send().await.assert_ok().text();
+        assert!(on.contains(r#"data-svelte-island="Clock""#), "{on}");
+        let off = client.get("/clock/off").send().await.assert_ok().text();
+        assert!(!off.contains("data-svelte-island"), "{off}");
+    }
+}
