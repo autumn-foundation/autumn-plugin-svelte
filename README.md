@@ -17,7 +17,7 @@ After the first release on crates.io:
 
 ```toml
 [dependencies]
-autumn-plugin-svelte = "0.1"
+autumn-plugin-svelte = "0.2"
 ```
 
 Before the release, use the Git repository:
