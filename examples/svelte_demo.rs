@@ -29,11 +29,13 @@ static ISLANDS: PluginAssets = PluginAssets::from_files(
 
 #[autumn_web::main]
 async fn main() {
-    autumn_web::app()
-        .plugin(SveltePlugin::new().bundle(&ISLANDS))
-        .routes(routes![index, clock_on, clock_off])
-        .run()
-        .await;
+    Box::pin(
+        autumn_web::app()
+            .plugin(SveltePlugin::new().bundle(&ISLANDS))
+            .routes(routes![index, clock_on, clock_off])
+            .run(),
+    )
+    .await;
 }
 
 fn layout(content: &Markup) -> Markup {
