@@ -1,7 +1,7 @@
 # autumn-plugin-svelte
 
 Svelte 5 islands for [Autumn](https://github.com/autumn-foundation/autumn)
-(`autumn-web` 0.9). The server renders an island in a Maud page. A small
+(`autumn-web` 0.10). The server renders an island in a Maud page. A small
 loader mounts a compiled Svelte component into it. When htmx swaps HTML, the
 loader mounts new islands and unmounts removed islands.
 
@@ -17,7 +17,7 @@ After the first release on crates.io:
 
 ```toml
 [dependencies]
-autumn-plugin-svelte = "0.2"
+autumn-plugin-svelte = "0.3"
 ```
 
 Before the release, use the Git repository:

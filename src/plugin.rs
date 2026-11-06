@@ -88,7 +88,7 @@ impl Plugin for SveltePlugin {
         Some(
             PluginContract::new(PLUGIN_NAME)
                 .plugin_version(env!("CARGO_PKG_VERSION"))
-                .autumn_web("0.9"),
+                .autumn_web("0.10"),
         )
     }
 
@@ -227,7 +227,7 @@ mod tests {
             contract.plugin_version.as_deref(),
             Some(env!("CARGO_PKG_VERSION"))
         );
-        assert_eq!(contract.autumn_web.as_deref(), Some("0.9"));
+        assert_eq!(contract.autumn_web.as_deref(), Some("0.10"));
         assert_eq!(contract.experimental_surfaces, Vec::<String>::new());
     }
 
