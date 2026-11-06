@@ -76,17 +76,24 @@ An ES module build (`formats: ["es"]`) also works. Name the file
 This code is in `src/main.rs`. The Vite output is in `islands/` at the crate
 root, so the path is `../islands/`.
 
-```rust
+```rust,no_run
 use autumn_plugin_svelte::SveltePlugin;
 use autumn_web::assets::PluginAssets;
+use autumn_web::prelude::*;
 
+// The demo bundle of this repository. Use the output of your own build.
 static ISLANDS: PluginAssets = PluginAssets::from_files(
     "app-islands", // any namespace except "svelte"
     &[
-        ("islands.js", include_bytes!("../islands/islands.js")),
-        ("islands.css", include_bytes!("../islands/islands.css")),
+        ("islands.js", include_bytes!("../examples/islands/islands.js")),
+        ("islands.css", include_bytes!("../examples/islands/islands.css")),
     ],
 );
+
+#[get("/")]
+async fn index() -> &'static str {
+    "Hello"
+}
 
 #[autumn_web::main]
 async fn main() {
@@ -109,8 +116,10 @@ collide.
 
 ```rust
 use autumn_plugin_svelte::{Island, MountWhen, svelte_bundle, svelte_script};
+use autumn_web::assets::PluginAssets;
 use autumn_web::prelude::*;
 
+# static ISLANDS: PluginAssets = PluginAssets::from_files("app-islands", &[]);
 #[get("/")]
 async fn index() -> AutumnResult<Markup> {
     let counter = Island::new("Counter")
@@ -178,7 +187,11 @@ The loader keeps one record for each island element.
   islands in it:
 
   ```rust
-  html! { div data-svelte-ignore { (PreEscaped(sanitized_comment)) } }
+  use autumn_web::prelude::*;
+
+  fn comment(sanitized_comment: &str) -> Markup {
+      html! { div data-svelte-ignore { (PreEscaped(sanitized_comment)) } }
+  }
   ```
 
   Also tell your sanitizer to remove `data-svelte-*` attributes.
