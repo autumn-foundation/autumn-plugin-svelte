@@ -69,3 +69,8 @@ pub use assets::{ASSETS_NAMESPACE, LOADER_JS, SVELTE_ASSETS};
 pub use island::{Island, JsonKind, MountWhen, PropsError};
 pub use plugin::{PLUGIN_NAME, SveltePlugin};
 pub use tags::{svelte_bundle, svelte_script};
+
+/// Compiles the Rust snippets of the README as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;

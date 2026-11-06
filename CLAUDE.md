@@ -28,6 +28,8 @@ Svelte 5 islands for `autumn-web` 0.10.
 
 ## Rules
 
+- README Rust snippets are doctests. Make them compile; use `no_run`, not `ignore`.
+  `tests/doc_snippets.rs` checks the TOML snippets and the version pins in the docs.
 - Write docs and comments in ASD-STE100: short sentences, active voice.
 - After a change in `frontend/src/`, rebuild and commit `examples/islands/`.
   CI fails on a stale bundle.
