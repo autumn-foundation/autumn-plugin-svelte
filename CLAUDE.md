@@ -1,6 +1,6 @@
 # CLAUDE.md: autumn-plugin-svelte
 
-Svelte 5 islands for `autumn-web` 0.10.
+Svelte 5 islands for `autumn-web` 0.11.
 
 ## Layout
 
